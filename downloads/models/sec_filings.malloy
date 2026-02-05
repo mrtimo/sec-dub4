@@ -1,0 +1,1038 @@
+
+source: industry is duckdb.table('data/SICcodes.csv') extend {
+    --dimension: sic is SIC:::number
+    rename: SECOffice is column1
+    rename: Description is column2
+    rename: SIC is column0--:::number
+    dimension: Description_nc is replace(Description,',','.')
+        
+    primary_key: SIC
+}
+
+source: sub is duckdb.table('data/sub-08_2024.parquet') extend {
+
+    join_one: industry with sic
+    measure: 
+    num_companies is count(cik)
+    num_submissions is count(adsh)
+    num_industries is count(industry.Description)
+    num_10Ks is count(cik) {where: form = "10-K"}
+    num_10Ksamended is count(cik) {where: form = "10-K/A"}
+    # percent
+    pct_amended is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+    
+    dimension: 
+    SIC_f3 is substr(zipba::string,1,3)
+    accepted_hour is hour(accepted)
+
+    filed_str is filed::string
+    name_no_comma is replace(name,',','.')
+    cik_str is cik::string
+    division is trunc(sic / 1000)
+    industry_code is trunc(sic / 10)
+    --dimension: major_code is trunc(sic / 100)
+      dimension: city_and_state_country is concat(cityba, ', ', stprba, ', ', countryba)
+  dimension: city_and_state is concat(cityba, ', ', stprba,)    
+ -- dimension: cik_str is cik::string
+  dimension: sic_str is sic::string
+  --dimension: name_no_comma is replace(name,',','.')
+  measure: no_reports is count(cik)
+  primary_key: adsh
+  dimension: major_code is trunc(sic / 100)
+  dimension: period_timestamp is period::timestamp
+  dimension: num_days_P_to_filed is days(period to filed)
+  dimension: num_days_filed_to_acc is days(filed to accepted::date)
+    dimension: num_minutes_filed_to_acc is minutes(filed::timestamp to accepted)
+   -- dimension: industry_code is trunc(sic / 10)
+  --  dimension: division is trunc(sic / 1000)
+    dimension: Entity_Filer_Status is pick "Large Accelerated Filer" when afs = "1-LAF" 
+                                    pick "Accelerated Filer" when afs = "2-ACC"
+                                    pick "Smaller Reporting Accelerated" when afs = "3-SRA"
+                                    pick "Non-Accelerated Filer" when afs = "4-NON"
+                                    pick "Smaller Reporting Filer" when afs = "5-SML"
+                                    else null
+    
+    except: detail, ein, floataxis, floatdate, floatmems, instance, nciks, prevrpt, pubfloatusd
+    
+    
+
+# bar_chart
+view: by_year_10K_sub is{
+    group_by: Fiscal_Period_Close is period.year
+    aggregate: num_submissions
+    where: form = "10-K" --and period.year > @2011
+}  
+
+view: by_industry is{
+    group_by: sic, industry.Description
+    aggregate: num_companies
+    --where: form = "10-K" and period = @2023
+}
+
+view: by_name is{
+        group_by: name
+        --limit: 3
+}
+
+view: by_state is{
+        group_by: stprba
+        aggregate: num_submissions
+        --limit: 3
+}
+
+view: by_city is{
+        group_by: cityba
+        aggregate: num_submissions
+        --limit: 3
+}
+
+view: by_zip_code is{
+        group_by: zipba
+        aggregate: num_submissions
+        --limit: 3
+}
+
+view: by_country is{
+        group_by: countryba
+        aggregate: num_submissions
+        --limit: 3
+}
+
+view: by_form_type is{
+        group_by: form
+        aggregate: num_submissions
+        limit: 15
+}
+# bar_chart
+view: by_fiscal_period is{
+    group_by: Fiscal_Period_Close is period.year
+    aggregate: num_submissions
+    --where: form = "10-K" --and period.year > @2011
+} 
+
+# line_chart {size=spark y.independent}
+view: by_fiscal_period_spark is{
+    group_by: Fiscal_Period_Close is period.year
+    aggregate: num_submissions
+    --where: form = "10-K" --and period.year > @2011
+} 
+
+view: by_filer_type is {
+    group_by: afs
+    aggregate: num_submissions
+}
+# bar_chart
+view: by_filed_date is {
+    group_by: filed.year
+    aggregate: num_submissions
+}
+}
+
+
+// industries by year
+ -- # bar_chart - nested
+ --1.	Basic Information: Number of companies, number of industries, 
+--## renderer_legacy
+run: sub -> {
+    group_by: industry.Description
+    aggregate: num_companies is count(adsh)
+    unique_co is count(cik)
+    where: form = "10-K" and period.year > @2014 --and sic = null
+    # bar_chart
+    nest: by_sic is {
+         group_by: period.year
+         aggregate: num_companies
+    --    limit: 70
+     }
+}
+//table shows percentage growth
+run: sub -> {
+    group_by: industry.Description
+    --group_by: period.year
+    aggregate: num_companies_2022 is count(cik) {where: period.year = @2022 }
+    aggregate: num_companies_2015 is count(cik) {where: period.year = @2015 }
+    # percent
+    aggregate: pct_increase_15_22 is (count(cik) {where: period.year = @2022 } - count(cik) {where: period.year = @2015 } )/ count(cik) {where: period.year = @2015 }
+    --unique_co is count(cik)
+    where: form = "10-K" --and period.year = @2022 --and sic = null
+    order_by: num_companies_2022 desc
+}
+
+run: sub -> {
+    group_by: filed
+    aggregate: count1 is count(cik)
+    where: form = "10-K" and filed.year = @2023
+    order_by: count1 desc
+}
+--Q1-1
+--Number of companies (submitting 10-Ks per year)
+--## renderer_legacy
+
+
+
+--Q1-2
+##
+# bar_chart
+run: sub -> {
+    group_by: Fiscal_Period_Close is period.year
+    aggregate: Unique_Industries is count(industry.Description)
+    where: form = "10-K" and period.year >= @2011
+}
+
+--Q1-3
+run: sub -> {
+    group_by: form
+    aggregate: Number_of_forms_submitted is count(adsh)
+}
+
+--Q2
+// unique cik all years
+run: sub -> {
+    group_by: industry.Description
+    aggregate: unique_co is count(cik)
+    where: form = "10-K" --and period.year > @2010 and period.year <@2024 --and sic = null
+}
+-- unique cik all years - through time
+--Q2-1 -- unique co with sparkline
+run: sub -> {
+    group_by: Industry_Name is industry.Description
+    aggregate: unique_co is count(cik)
+    where: form = "10-K" and period.year >= @2011 and period.year < @2024
+    # line_chart { size=spark }
+    nest: trend_2011_to_2023 is {
+         group_by: period.year
+         aggregate: num_companies is count(adsh)
+     }
+}
+
+//looking at 10-K/As
+// by industry, by year
+run: sub -> {
+    group_by: form
+    aggregate: unique_co is count(cik)
+    where: form = "10-K/A"
+   -- # bar_chart
+
+    --# bar_chart
+        nest: by_ind is {
+            group_by: industry.Description
+            aggregate: unique_co is count(cik)
+        # bar_chart        
+        nest: by_year is {
+         group_by: period.year
+         aggregate: num_companies is count(adsh)
+  
+    }
+        }
+    --    } limit: 70}
+}
+//Q3-1
+// Amended Returns by Year
+# bar_chart
+run: sub -> {
+    group_by: Period_Close is period.year
+    aggregate: amended_10Ks is count(cik)
+    where: form = "10-K/A" and period.year >= @2011 and period.year < @2024
+}
+//looking at 10-K/As 
+//by year, by ind
+//
+run: sub -> {
+    group_by: form
+    aggregate: unique_co is count(adsh)
+    where: form = "10-K/A"
+    # bar_chart
+    nest: by_year is {
+         group_by: period.year
+         aggregate: num_companies is count(adsh)
+    }
+    --# bar_chart
+        nest: by_ind is {
+            group_by: industry.Description
+            aggregate: unique_co is count(cik)
+        }
+    --    } limit: 70}
+}
+// count of amended returns by year
+run: sub -> {
+    --group_by: 
+    group_by: period.year
+    aggregate: num_companies is count(), unique_companies is count(cik)--, comp2plus is count({where: cik > 2 }
+    where: form = "10-K/A"
+    --    } limit: 70}
+}
+
+run: sub -> {
+    --group_by: 
+    group_by: period.year
+    aggregate: num_companies is count(adsh), unique_companies is count(cik), comp2plus is count(cik) {where: form = "10-K/A" }
+    where: form = "10-K/A"
+    --    } limit: 70}
+}
+
+-- number of amended retursn
+run: sub -> {
+    group_by: industry.Description, period.year
+    aggregate: unique_co is count(cik) {where: form = "10-K"}
+    orgs_with_amended_10k is count(cik) {where: form = "10-K/A"}
+    --co_10K is count(cik) {where: form = "10-K"}
+    # percent
+    perct_a is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+    order_by: perct_a desc 
+    --where: unique_co > 10
+    --    } limit: 70}
+} 
+
+// industries with 10-K / As
+run: sub -> {
+    group_by: industry.Description--, period.year
+    aggregate: unique_co is count(cik) {where: form = "10-K"}
+    orgs_with_amended_10k is count(cik) {where: form = "10-K/A"}
+    --co_10K is count(cik) {where: form = "10-K"}
+    # percent
+    perct_a is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+    order_by: orgs_with_amended_10k desc 
+    --    } limit: 70}
+} 
+//nest industries with most 10/K A by year
+run: sub -> {
+    group_by: period.year
+    where: form = "10-K" or form = "10-K/A"
+    nest: by_sic is {
+    group_by: industry.Description
+    aggregate: unique_co is count(cik) {where: form = "10-K"}
+    co_w_a is count(cik) {where: form = "10-K/A"}
+    --co_10K is count(cik) {where: form = "10-K"}
+    # percent
+    perct_a is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+    having: unique_co > 20
+    order_by: perct_a desc 
+    limit:10
+    --    } limit: 70}
+    }
+} 
+
+--Q3 -- good
+run: sub -> {
+    group_by: industry.Description
+
+    aggregate: unique_co is count(cik)
+    aggregate: total_filed_10ks is count(adsh) {where: form = "10-K"}
+    --# percent
+    --aggregate: pct_total is count(adsh) / all(count())
+     --growth is count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011}
+   
+    # hidden
+    diff_abs is abs(count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011})
+ 
+    --having: count(cik) {where: form = "10-K/A" and period.year = @2023} > 5
+    aggregate: ind_size_2023 is count(cik) {where: period.year = @2023}
+    having: ind_size_2023 > 60
+    order_by: pct_a_2023 desc
+    # number="0.0%"
+    aggregate:  pct_a_2023 is count(adsh) {where: form = "10-K/A" and period.year = @2023} / count(adsh) {where: form = "10-K" and period.year = @2023}
+     # number="0.0%"
+    aggregate:  pct_a_all is count(adsh) {where: form = "10-K/A"} / count(adsh) {where: form = "10-K"}
+   
+     
+     # line_chart { size=spark }
+
+    nest: trend_2023_to_2011 is {
+        group_by: year_close is period.year
+        aggregate: perct_a is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+        where: period.year >= @2011 and period.year < @2024
+    }
+}
+
+run: sub -> {
+    group_by: industry.Description
+    where: form = "10-K/A" or form = "10-K"
+    nest: by_year is {
+    group_by:  period.year
+    aggregate: unique_co is count(cik) {where: form = "10-K"}
+    co_w_a is count(cik) {where: form = "10-K/A"}
+    --co_10K is count(cik) {where: form = "10-K"}
+    # percent
+    perct_a is count(cik) {where: form = "10-K/A"} / count(cik) {where: form = "10-K"}
+    having: unique_co > 20
+    order_by: perct_a desc 
+    limit:10
+    --    } limit: 70}
+    }
+} 
+
+// industries by year
+ -- # bar_chart - nested
+ --1.	Basic Information: Number of companies, number of industries, 
+--## renderer_legacy
+--# line_chart
+run: sub -> {
+    group_by: 
+    year1 is period.year, industry.Description
+    aggregate: 
+    num_companies is count(adsh)
+    where: form = "10-K" and period.year > @2015
+    --order_by: year1 --and sic = null
+}
+
+// industries by year -- good one
+ -- # bar_chart
+run: sub -> {
+    group_by: industry.SIC, industry.Description
+    aggregate: num_companies is count(adsh)
+    where: form = "10-K" --and period = @2021 --and sic = null
+    # bar_chart
+    nest: by_sic is {
+        group_by: period.year
+        aggregate: num_companies is count(adsh)
+        --limit: 70
+     }
+}
+
+
+// industries by state
+ -- # bar_chart
+run: sub -> {
+    group_by: stprba
+    aggregate: num_companies is count(name)
+    where: form = "10-K" --and period = @2021 --and sic = null
+    # bar_chart
+    nest: by_ind is {
+        group_by: industry.Description
+        aggregate: num_companies is count(name)
+        limit: 8
+     }
+}
+
+// industries by zip code
+ -- # bar_chart
+run: sub -> {
+    group_by: zipba, stprba
+    aggregate: num_companies is count(name)
+    where: form = "10-K" --and period = @2021 --and sic = null
+    # bar_chart
+    nest: by_ind is {
+        group_by: industry.Description
+        aggregate: num_companies is count(name)
+        limit: 8
+     }
+}
+
+// industries by first 3 zip
+ -- # bar_chart
+run: sub -> {
+    group_by: industry.Description
+    aggregate: num_companies is count(name)
+    where: form = "10-K" and SIC_f3 = '958' or SIC_f3 = '956' or SIC_f3 = '957' or SIC_f3 = '942' or SIC_f3 = '945' --and period = @2021 --and sic = null
+    --# bar_chart
+    -- nest: by_ind is {
+    --     group_by: industry.Description
+    --     aggregate: num_companies is count(name)
+    --     limit: 8
+    --  }
+}
+
+//change sic code
+run: sub -> {
+    group_by: name, sic, period.year
+    --aggregate: num_companies is count(name)
+    where: form = "10-K" --and SIC_f3 = '958' or SIC_f3 = '956' or SIC_f3 = '957' or SIC_f3 = '942' or SIC_f3 = '945' --and period = @2021 --and sic = null
+    --# bar_chart
+    -- nest: by_ind is {
+    --     group_by: industry.Description
+    --     aggregate: num_companies is count(name)
+    --     limit: 8
+    --  }
+}
+
+// change in SIC code??
+run: sub -> {
+  select: adsh, cik, name, sic, mas1, bas1, period.quarter
+  calculate: r is row_number() {partition_by: name; order_by: sic}
+} -> {
+  select: *
+  where: r = 1
+}
+
+//replicate Josh Alan Lee's code
+//change in zip
+run: sub -> {
+    group_by: cik_str, name_no_comma, filed_str, fy, zipba, sic, industry.Description_nc
+    --limit: 1000
+    where: form = "10-K" --| "10-Q"
+    calculate: change_in_sic is pick 'True' when sic != lag(sic) {partition_by: name_no_comma; order_by: filed_str} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+    else 'No Change'
+    calculate: old_sic is pick lag(sic) when sic != lag(sic) {partition_by: name_no_comma; order_by: filed_str} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+    else 1
+    --having: change_in_sic = "True"
+    -- calculate: change_in_bas is pick 'True' when bas1_nc != lag(bas1_nc) {partition_by: cik_str; order_by: filed_str} --when lag(mas1) != mas1 and lag(name) = name
+    -- else 'No Change'
+    -- calculate: change_in_zipba is pick 'True' when zipba != lag(zipba) {partition_by: cik_str; order_by: filed_str} --when lag(mas1) != mas1 and lag(name) = name
+    -- else 'No Change'
+    -- calculate: change_in_zipma is pick 'True' when zipma != lag(zipma) {partition_by: cik_str; order_by: filed_str} --when lag(mas1) != mas1 and lag(name) = name
+    -- else 'No Change'
+   -- change_found_in_bas1 is pick 'True' when lag(bas1) != bas1 --& adsh = lag(adsh)
+    --else 'No Change'
+   order_by: name_no_comma, filed_str
+--calculate: changed is lag(address) { partition_by: company_name; order_by: something }
+} -- -> {
+--   --select: *
+  
+--   group_by: old_sic
+--   aggregate: sic_1 is count()
+--   where: change_in_sic = "True"
+-- }
+
+
+//replicate Josh Alan Lee's code
+//change in zip!!!!!
+run: sub -> {
+    group_by: adsh, cik_str, name_no_comma, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, afs, form, sic, period, industry.Description_nc
+    --limit: 1000
+    where: form = "10-K" --| "10-Q"
+    --calculate: change_in_zipma is pick 'True' when zipma != lag(zipma) {partition_by: cik_str; order_by: filed_str} --when lag(mas1) != mas1 and lag(name) = name
+    --else 'No Change'
+    calculate: change_in_zipma is pick 'Initial Value' when lag(zipma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipma != lag(zipma) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: change_in_zipba is pick 'Initial Value' when lag(zipba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipba != lag(zipba) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: old_zipma is lag(zipma)
+    calculate: old_zipba is lag(zipba)
+    calculate: old_cityba is lag(cityba)
+    calculate: old_cityma is lag(cityma)
+    calculate: old_stprba is lag(stprba)
+    calculate: old_stprma is lag(stprma)
+    --having: change_in_zipma > "True"
+   order_by: name_no_comma, filed_str
+--calculate: changed is lag(address) { partition_by: company_name; order_by: something }
+} -> {
+   select: adsh, cik_str, name_no_comma, filed_str, fy, stprinc, afs, form, sic, period, Description_nc, change_in_zipma, change_in_zipba, old_zipba, zipba, old_cityba, cityba, old_stprba, stprba, old_zipma, zipma, old_cityma, cityma, old_stprma, stprma
+   --limit: 100
+   where: change_in_zipba = "True"
+    
+  --measure: name_is is count()
+
+    -- }
+  }  -> {
+        group_by: Description_nc
+        aggregate: num_moves is count(adsh)
+        order_by: num_moves desc
+        limit: 50
+        nest: by_new_state is {
+            group_by: stprma
+            aggregate: num_companies is count(cik_str)
+            limit: 10
+            nest: by_old_state is {
+                group_by: old_stprma
+                aggregate: num_companies is count(cik_str)
+                limit: 3
+            }
+
+        }
+    }
+
+--2nd copy
+run: sub -> {
+    group_by: adsh, cik_str, name_no_comma, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, afs, form, sic, period, industry.Description_nc
+    --limit: 1000
+    where: form = "10-K" --| "10-Q"
+    --calculate: change_in_zipma is pick 'True' when zipma != lag(zipma) {partition_by: cik_str; order_by: filed_str} --when lag(mas1) != mas1 and lag(name) = name
+    --else 'No Change'
+    calculate: change_in_zipma is pick 'Initial Value' when lag(zipma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipma != lag(zipma) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: change_in_zipba is pick 'Initial Value' when lag(zipba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipba != lag(zipba) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: old_zipma is lag(zipma)
+    calculate: old_zipba is lag(zipba)
+    calculate: old_cityba is lag(cityba)
+    calculate: old_cityma is lag(cityma)
+    calculate: old_stprba is lag(stprba)
+    calculate: old_stprma is lag(stprma)
+    --having: change_in_zipma > "True"
+   order_by: name_no_comma, filed_str
+--calculate: changed is lag(address) { partition_by: company_name; order_by: something }
+} -> {
+   select: adsh, cik_str, name_no_comma, filed_str, fy, stprinc, afs, form, sic, period, Description_nc, change_in_zipma, change_in_zipba, old_zipba, zipba, old_cityba, cityba, old_stprba, stprba, old_zipma, zipma, old_cityma, cityma, old_stprma, stprma
+   --limit: 100
+   where: change_in_zipba = "True"
+
+    
+  --measure: name_is is count()
+
+    -- }
+  }  -> {
+        group_by: Description_nc
+        aggregate: num_moves is count(adsh)
+        order_by: num_moves desc
+        limit: 50
+        nest: by_new_state is {
+            group_by: stprma
+            aggregate: num_companies is count(cik_str)
+            limit: 10
+            --# bar_chart
+            nest: by_old_state is {
+                
+                --group_by: period.year 
+                --aggregate: num_cos is count(cik_str)
+                group_by: old_stprma
+                aggregate: num_companies is count(cik_str)
+                limit: 3
+            }
+
+        }
+    }
+
+run: sub -> {
+    group_by: stprba
+    aggregate: num_cos is count(cik)
+    where: form = "10-K" and period.year >= @2011 and period.year < @2024
+    # line_chart
+    nest: by_year is {
+        group_by: period.year 
+        aggregate: num_cos is count(cik)
+    }
+}
+
+
+//within state
+run: sub -> {
+    group_by: adsh, cik_str, name_no_comma, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, afs, form, sic, period, industry.Description_nc
+    where: form = "10-K" --| "10-Q"
+    calculate: change_in_zipma is pick 'Initial Value' when lag(zipma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipma != lag(zipma) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: change_in_zipba is pick 'Initial Value' when lag(zipba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipba != lag(zipba) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: old_zipma is lag(zipma), old_zipba is lag(zipba), old_cityba is lag(cityba)
+old_cityma is lag(cityma), old_stprba is lag(stprba), old_stprma is lag(stprma)
+   order_by: name_no_comma, filed_str
+} -> {
+   select: adsh, cik_str, name_no_comma, filed_str, fy, stprinc, afs, form, sic, period, Description_nc, change_in_zipma, change_in_zipba, old_zipba, zipba, old_cityba, cityba, old_stprba, stprba, old_zipma, zipma, old_cityma, cityma, old_stprma, stprma
+   where: change_in_zipba = "True"
+  }  -> { 
+        group_by: Description_nc
+        aggregate: num_moves is count(adsh)
+        order_by: num_moves desc
+        nest: by_in_state is { 
+        group_by: in_state_ma is pick "True" when old_stprba = stprba
+                          else "False" 
+        aggregate: num_moves is count(adsh)
+        nest: by_new_state is {
+            group_by: cityba
+            aggregate: num_companies is count(adsh)
+            limit: 10
+            nest: by_old_state is {
+                group_by: old_cityba
+                aggregate: num_companies is count(adsh)
+                limit: 3
+            }
+        }
+    }
+}
+
+// without state moves -- for paper - state to state
+--run: sub -> {
+query: moved_cos is sub -> {
+    group_by: adsh, cik_str, name_no_comma, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, countryba, countryma, bas1, mas1, afs, form, sic, period, industry.Description_nc
+    where: form = "10-K" --| "10-Q"
+    calculate: change_in_zipma is pick 'Initial Value' when lag(zipma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipma != lag(zipma)  else 'No Change'
+    calculate: change_in_zipba is pick 'Initial Value' when lag(zipba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipba != lag(zipba) else 'No Change'
+    calculate: change_in_cityma is pick 'Initial Value' when lag(cityma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when cityma != lag(cityma)  else 'No Change'
+    calculate: change_in_cityba is pick 'Initial Value' when lag(cityba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when cityba != lag(cityba) else 'No Change'
+    calculate: change_in_stprma is pick 'Initial Value' when lag(stprma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when stprma != lag(stprma)  else 'No Change'
+    calculate: change_in_stprba is pick 'Initial Value' when lag(stprba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when stprba != lag(stprba) else 'No Change'
+    calculate: change_in_countryma is pick 'Initial Value' when lag(countryma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when countryma != lag(countryma)  else 'No Change'
+    calculate: change_in_countryba is pick 'Initial Value' when lag(countryba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when countryba != lag(countryba) else 'No Change'
+    calculate: change_in_bas1 is pick 'Initial Value' when lag(bas1) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when bas1 != lag(bas1)  else 'No Change'
+    calculate: change_in_mas1 is pick 'Initial Value' when lag(mas1) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when mas1 != lag(mas1) else 'No Change'
+    calculate: old_zipma is lag(zipma), old_zipba is lag(zipba), 
+                old_cityma is lag(cityma), old_cityba is lag(cityba)
+                old_stprba is lag(stprba), old_stprma is lag(stprma),
+                old_countryba is lag(countryba), old_countryma is lag(countryma)
+                old_bas1 is lag(bas1), old_mas1 is lag(mas1)
+    aggregate: ind_sub_total is count(adsh) {where: industry.Description_nc = industry.Description_nc}
+   order_by: name_no_comma, filed_str
+} 
+
+query: total_10ks_by_ind is moved_cos -> {
+    group_by: Description_nc
+    aggregate: ind_sub_total is count(adsh)-- {where: Description_nc = Description_nc}
+}
+
+source: ind_counts is total_10ks_by_ind extend {
+    primary_key: Description_nc
+}
+
+source: merged1 is moved_cos extend {
+    join_one: ind_counts with Description_nc
+}
+
+run: merged1 -> {
+    select: ind_counts.ind_sub_total
+}
+
+
+
+
+-- for paper
+run: merged1 -> {
+        group_by: Description_nc, ind_counts.ind_sub_total
+        --# percent
+        aggregate: total_moves is count(adsh)
+        # percent
+        total_moves_per_10k is count(adsh) / ind_counts.ind_sub_total.sum()
+       # percent
+        out_state_moves is count(adsh) {where: old_stprba != stprba and countryba = "US" or countryba = "CA" and old_countryma = "US" or old_countryma = "CA" } / count(adsh) --{where:}
+        order_by: total_moves_per_10k desc
+    where: change_in_zipma = "True" or change_in_zipba = True or 
+    change_in_cityma = "True" or change_in_cityba = "True" or 
+    change_in_stprba = "True" or change_in_stprba = "True" or 
+    change_in_countryma = "True" or change_in_countryba = "True" or 
+    change_in_bas1 = "True" or change_in_mas1 = "True" 
+    
+        having: total_moves > 110
+        
+        nest: move_outs is { 
+            group_by: state is old_stprba
+            # number="0.0%"
+            aggregate: pct_of_moves is count(adsh) / all(count(adsh)) {where: old_stprba != stprba}
+            aggregate: moves is count(adsh) 
+            aggregate: moves_denom is all(count(adsh)) {where: old_stprba != stprba}
+            limit: 3
+            where: old_stprba != stprba and stprba != null and old_stprba != null and countryba = "US" or countryba = "CA" and old_countryma = "US" or old_countryma = "CA"
+        }
+
+        nest: move_ins is {
+            group_by: state is stprba
+            # number="0.0%"
+            aggregate: pct_of_moves is count(adsh) / all(count(adsh)) {where: old_stprba != stprba}
+            limit: 3
+            where: old_stprba != stprba and stprba != null and old_stprba != null and countryba = "US" or countryba = "CA" and old_countryma = "US" or old_countryma = "CA"
+    }
+}
+
+
+-- for paper
+run: merged1 -> {
+        group_by: Description_nc
+        --# percent
+        aggregate: 
+        uniq_orgs is count(cik_str)
+        total_moves is count(adsh)
+        submitted_10ks is ind_counts.ind_sub_total.sum()
+        # percent
+        moves_per_10k is count(adsh) / ind_counts.ind_sub_total.sum()
+        
+    
+    where: change_in_zipma = "True" or change_in_zipba = True or 
+    change_in_cityma = "True" or change_in_cityba = "True" or 
+    change_in_stprba = "True" or change_in_stprba = "True" or 
+    change_in_countryma = "True" or change_in_countryba = "True" or 
+    change_in_bas1 = "True" or change_in_mas1 = "True" 
+    having: count(cik_str) > 20
+    order_by: moves_per_10k desc
+ 
+}
+
+run: sub -> {
+    group_by: industry.Description_nc
+    aggregate: count_tot is count(cik)
+    having: count(cik) < 5
+    nest: by_top_country is {
+        group_by: countryba
+        limit: 1
+        aggregate: count_in_c is count(cik)
+    }
+}
+
+//away vs to cities
+//best one -- table of most - for paper
+run: moved_cos -> {
+    group_by: Description_nc
+     where: change_in_zipma = "True" or change_in_zipba = True or 
+    change_in_cityma = "True" or change_in_cityba = "True" or 
+    change_in_stprba = "True" or change_in_stprba = "True" or 
+    change_in_countryma = "True" or change_in_countryba = "True" or 
+    change_in_bas1 = "True" or change_in_mas1 = "True" 
+       
+        aggregate: total_moves is count(adsh) 
+        aggregate: unique_orgs is count(cik_str) 
+        # number="0.0%"
+        aggregate: pct_in_state_moves is count(adsh) {where: old_stprba = stprba and countryba = "US" and old_countryba = "US"} / count(adsh) 
+        # number="0.0%"
+        aggregate: pct_out_state_moves is count(adsh) {where: old_stprba != stprba and countryba = "US" and old_countryba = "US"} / count(adsh)
+        # number="0.0%"
+        aggregate: to_usa is count(adsh) {where: old_countryba != "US" and countryba = "US"} / count(adsh)
+        # number="0.0%"
+        aggregate: out_of_usa is count(adsh) {where: old_countryba = "US" and countryba != "US"} / count(adsh)
+        # number="0.0%"
+        aggregate: ex_US_to_ex_US is count(adsh) {where: old_countryba != "US" and countryba != "US"} / count(adsh)  --/ count(cik_str) {where: in_state = "False"}
+        order_by: pct_out_state_moves desc
+        having: unique_orgs > 20
+
+}
+
+--## renderer_legacy
+-- industries by percent 8-K
+-- 8-K analysis
+run: sub -> {
+        group_by: industry.Description
+        aggregate: num_orgs is count(cik) --{where: form = "10-K"}
+        num_8ks is count(adsh) {where: form = "8-K"}
+        aggregate: per_co_8k is count(adsh) {where: form = "8-K"} / count(cik) {where: form = "10-K"}
+        order_by: per_co_8k desc
+        having: num_orgs > 19
+        where: form = "10-K" or form = "8-K" and period < @2024 and period.day > @2010
+         # line_chart { size=spark }
+         --# bar_chart
+        nest: by_8k_per_year is {
+            group_by: period.year
+            --aggregate: count_co is count(cik)
+            --aggregate: count_8k is count(adsh) {where: form = "8-K"}
+            aggregate: avg_8k_per_year is count(adsh) {where: form = "8-K"} / count(cik) {where: form = "10-K"}
+            --where: form = "10-K" or form = "8-K" and period.quarter < @2023-12-01 and period.quarter > @2011-01-01
+            --aggregate:   --and countryba = "US"} / count(adsh) 
+            --aggregate: per_co_year_8ka is count(adsh) {where: form and countryba = "US"} / count(adsh) 
+        }
+
+}
+
+-- different addresses
+run: sub -> {
+        --group_by: industry.Description
+        aggregate: unique_10Ks is count(adsh) {where: form = "10-K"}
+        --aggregate: same_zip_ma_ba_on_10k is count(adsh) {where: form = "10-K" and zipma = zipba}
+        --aggregate: diff_zipma_and_ba_on_10k is count(adsh) {where: form = "10-K" and zipma != zipba}
+        # percent
+        aggregate: pct_diff_zips is count(adsh) {where: form = "10-K" and zipma != zipba} / count(adsh) {where: form = "10-K" and zipma = zipba}
+        --aggregate: num_orgs_same_ba is count(adsh) {where: form = "10-K" and bas1 = mas1}
+        --aggregate: num_orgs1_ba_dif is count(adsh) {where: form = "10-K" and bas1 != mas1}
+        # percent
+        aggregate: pct_diff_addr is count(adsh) {where: form = "10-K" and bas1 != mas1} / count(adsh) {where: form = "10-K" and bas1 = mas1}
+        --# percent
+        --aggregate: pct_null_mas1 is count(adsh) {where: form = "10-K" and mas1 = null} / count(adsh)
+
+}
+
+--instate vs outstate simple
+--summary statistics
+run: moved_cos -> {
+
+        aggregate: total_moves is count(adsh) 
+        aggregate: unique_orgs_moving is count(cik_str) 
+        --aggregate: change__in_zip_ma is count(adsh) {where: old_zipma != zipma}
+        --aggregate: change_in_zip_ba is count(adsh) {where: old_zipba != zipba}
+        --aggregate: change__in_city_ba is count(adsh) {where: old_cityba != cityba}
+        --aggregate: change_in_city_ma is count(adsh) {where: old_cityma != cityma}
+        --aggregate: change__in_stpr_ba is count(adsh) {where: old_stprba != stprba}
+        --aggregate: change__in_stpr_ma is count(adsh) {where: old_stprma != stprma}
+       -- aggregate: change_in_city_ma is count(adsh) {where: old_cityma != cityma}
+        --aggregate: change_in_countryba is count(adsh) {where: old_countryba != countryba}
+        --aggregate: change_in_countryma is count(adsh) {where: old_countryba != countryma}
+        --aggregate: change_in_mas1 is count(adsh) {where: old_mas1 != mas1}
+        --aggregate: change_in_bas1 is count(adsh) {where: old_bas1 != bas1}
+        --aggregate: change_in_mas1_a_zipma is count(adsh) {where: old_mas1 != mas1 and old_zipma != zipma}
+        --aggregate: change_zip_both is count(adsh) {where: change_in_zipba = "True" or change_in_zipma = "True" }
+      where: change_in_zipma = "True" or change_in_zipba = True or 
+    change_in_cityma = "True" or change_in_cityba = "True" or 
+    change_in_stprba = "True" or change_in_stprba = "True" or 
+    change_in_countryma = "True" or change_in_countryba = "True" or 
+    change_in_bas1 = "True" or change_in_mas1 = "True" 
+ 
+    # percent
+        aggregate: pct_within_zip_us is count(adsh) {where: old_zipba = zipba and countryba = "US" and old_countryba = "US"} / count(adsh)
+       
+   
+   # percent
+        aggregate: pct_in_state_moves is count(adsh) {where: old_stprba = stprba and countryba = "US" and old_countryba = "US"} / count(adsh) 
+        --aggregate: num_cos_in_state_moves is count(cik_str) {where: in_state = "True"}
+        --aggregate: out_state_moves is count(adsh) {where: in_state = "False"}
+        --aggregate: num_cos_out_state_moves is count(cik_str) {where: in_state = "False"}
+        # percent
+        aggregate: pct_out_state_moves is count(adsh) {where: old_stprba != stprba and countryba = "US" and old_countryba = "US"} / count(adsh)
+        # percent
+        aggregate: to_usa is count(adsh) {where: old_countryba != "US" and countryba = "US"} / count(adsh)
+        # percent
+        aggregate: out_of_usa is count(adsh) {where: old_countryba = "US" and countryba != "US"} / count(adsh)
+        # percent
+        aggregate: ex_US_to_ex_US is count(adsh) {where: old_countryba != "US" and countryba != "US"} / count(adsh)
+}
+
+
+--instate vs outstate simple
+--summary statistics --for paper
+run: moved_cos -> {
+        aggregate: total_moves is count(adsh) 
+        aggregate: unique_orgs_moving is count(cik_str) 
+    # percent
+        aggregate: pct_within_zip is count(adsh) {where: old_zipba = zipba and countryba = "US" and old_countryba = "US"} / count(adsh)
+   # percent
+        aggregate: pct_in_state_moves is count(adsh) {where: old_stprba = stprba and countryba = "US" and old_countryba = "US"} / count(adsh) 
+           # percent
+        aggregate: pct_out_state_moves is count(adsh) {where: old_stprba != stprba and countryba = "US" and old_countryba = "US"} / count(adsh)
+        # percent
+        aggregate: to_usa is count(adsh) {where: old_countryba != "US" and countryba = "US"} / count(adsh)
+        # percent
+        aggregate: out_of_usa is count(adsh) {where: old_countryba = "US" and countryba != "US"} / count(adsh)
+        # percent
+        aggregate: ex_US_to_ex_US is count(adsh) {where: old_countryba != "US" and countryba != "US"} / count(adsh)
+        where: change_in_zipma = "True" or change_in_zipba = True or 
+    change_in_cityma = "True" or change_in_cityba = "True" or 
+    change_in_stprba = "True" or change_in_stprba = "True" or 
+    change_in_countryma = "True" or change_in_countryba = "True" or 
+    change_in_bas1 = "True" or change_in_mas1 = "True" 
+}
+
+
+run: sub -> {
+    group_by: adsh, cik_str, name_no_comma, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, afs, form, sic, period, industry.Description_nc, countryba
+    where: form = "10-K" --| "10-Q"
+    --aggregate: total_cik
+    calculate: change_in_zipma is pick 'Initial Value' when lag(zipma) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipma != lag(zipma) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: change_in_zipba is pick 'Initial Value' when lag(zipba) = NULL 
+                                pick 'Initial' when lag(name_no_comma) != name_no_comma 
+                                pick 'True' when zipba != lag(zipba) --{partition_by: name} --order_by: filed} --and cik_str = lag(cik) --when lag(mas1) != mas1 and lag(name) = name
+                                else 'No Change'
+    calculate: old_zipma is lag(zipma), old_zipba is lag(zipba), old_cityba is lag(cityba)
+old_cityma is lag(cityma), old_stprba is lag(stprba), old_stprma is lag(stprma), old_countryba is lag(countryba)
+--in_state_move pick 
+   order_by: name_no_comma, filed_str
+} -> {
+   --select: adsh, cik_str, name_no_comma, filed_str, fy, stprinc, afs, form, sic, period, Description_nc, change_in_zipma, change_in_zipba, old_zipba, zipba, old_cityba, cityba, old_stprba, stprba, old_zipma, zipma, old_cityma, cityma, old_stprma, stprma, in_state is pick "True" when (old_stprba = stprba and countryba = "US") else "False", old_countryba, countryba
+   --where: change_in_zipba = "True"
+   --where: countryba = "US"
+
+        aggregate: total_moves is count(adsh) 
+        aggregate: unique_orgs_moving is count(cik_str) 
+        aggregate: change__in_zip_ma is count(adsh) {where: change_in_zipma = "True"}
+        aggregate: change_in_zip_ba is count(adsh) {where: change_in_zipba = "True"}
+        --aggregate: change_zip_both is count(adsh) {where: change_in_zipba = "True" or change_in_zipma = "True" }
+     
+    -- # percent
+      --  aggregate: pct_diff_zip_ma is count(adsh) {where: old_zipma != zipma} / count(adsh) 
+     --  # percent
+      --  aggregate: pct_same_zip_ba is count(adsh) {where: old_zipba = zipba} / count(adsh) 
+    --# percent
+      --  aggregate: pct_diff_zip_ba is count(adsh) {where: old_zipba != zipba} / count(adsh) 
+      -- # percent
+       -- aggregate: pct_same_zip_ba is count(adsh) {where: old_zipba = zipba} / count(adsh) 
+   # percent
+        aggregate: pct_in_state_moves is count(adsh) {where: old_stprba = stprba and countryba = "US" and old_countryba = "US"} / count(adsh) 
+        --aggregate: num_cos_in_state_moves is count(cik_str) {where: in_state = "True"}
+        --aggregate: out_state_moves is count(adsh) {where: in_state = "False"}
+        --aggregate: num_cos_out_state_moves is count(cik_str) {where: in_state = "False"}
+        # percent
+        aggregate: pct_out_state_moves is count(adsh) {where: old_stprba != stprba and countryba = "US" and old_countryba = "US"} / count(adsh)
+        # percent
+        aggregate: to_usa is count(adsh) {where: old_countryba != "US" and countryba = "US"} / count(adsh)
+        # percent
+        aggregate: out_of_usa is count(adsh) {where: old_countryba = "US" and countryba != "US"} / count(adsh)
+        # percent
+        aggregate: ex_US_to_ex_US is count(adsh) {where: old_countryba != "US" and countryba != "US"} / count(adsh)
+}
+
+
+run: sub -> {
+    group_by: industry.Description
+    aggregate: totalcos_2011 is count(cik) {where: period.year = @2011}
+    aggregate: totalcos_2023 is count(cik) {where: period.year = @2023}
+    aggregate: abs_growth is count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011}
+  # number="0%"
+    aggregate: pct_growth is (count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011}) / count(cik) {where: period.year = @2011}
+ 
+    order_by: pct_growth desc
+    --having: totalcos_2011 > 100
+    where: form = "10-K"  and period.year >= @2011 and period.year < @2024
+      
+      
+}
+
+
+--sparkline
+--for paper
+run: sub -> {
+    group_by: industry.Description
+    aggregate: unique_co is count(cik)
+    # hidden
+    aggregate: total_filed_10ks is count(adsh)
+    --# percent
+    --aggregate: pct_total is count(adsh) / all(count())
+    aggregate: totalcos_2011 is count(cik) {where: period.year = @2011}
+    aggregate: totalcos_2023 is count(cik) {where: period.year = @2023}
+    --growth is count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011}
+    # percent
+    pct_growth is ((count(cik) {where: period.year = @2023} - (count(cik) {where: period.year = @2011})) / (count(cik) {where: period.year = @2011}))
+    # hidden
+    abs_pct_growth is abs((count(cik) {where: period.year = @2023} - (count(cik) {where: period.year = @2011})) / (count(cik) {where: period.year = @2011}))
+
+    # hidden
+    diff_abs is abs(count(cik) {where: period.year = @2023} - count(cik) {where: period.year = @2011})
+    order_by: abs_pct_growth desc
+    having: totalcos_2011 >= 8
+    where: form = "10-K"  and period.year >= @2011 and period.year < @2024
+    --# line_chart { size=spark }
+    --  nest: by_top_3_states is {
+    --         group_by: stprma
+    --         aggregate: totalco is count(cik)
+    --         where: countryba = "US"
+    --         limit: 3
+    # line_chart { size=spark }
+     nest: by_time is {
+                 group_by: period.year
+                 aggregate: totalco1 is count(cik)
+    }   
+}
+
+
+
+//replicate Josh Alan Lee's code
+//change in zip
+run: sub -> {
+    group_by: name_no_comma --, filed_str, fy, zipba, zipma, cityba, cityma, stprba, stprma, stprinc, afs, form, sic, period, industry.Description
+    --limit: 1000
+    where: form = "10-K" --| "10-Q"
+   
+   --order_by: name_no_comma, filed_str
+   having: count(sic) > 1
+   nest: by_stuff is {
+    group_by: name_no_comma, period.year, sic, industry.Description
+   }
+--calculate: changed is lag(address) { partition_by: company_name; order_by: something }
+-- } -> {
+--     group_by: by_stuff.name_no_comma --, industry.Description
+}
+

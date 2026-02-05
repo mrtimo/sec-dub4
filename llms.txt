@@ -1,0 +1,100 @@
+# Malloy Data Explorer
+
+> Malloy Data Explorer - Static web app for exploring semantic data models
+> All queries run in-browser using DuckDB WASM
+
+**Site URL:** `/sec-dub4/`
+
+## Overview
+
+**Content:** 2 Malloy models • 2 data files • 1 notebook
+**Capabilities:** Browse schemas • Preview data • Build queries • Download results (CSV/JSON)
+
+**Data Files:** SICcodes.csv, sub-01-2026.parquet
+
+**Notebooks:** TestModel
+
+## URL Patterns
+
+All URLs with `/#/` prefix return HTML pages. `/downloads/` URLs return raw files.
+
+| Pattern | Returns | Description |
+|---------|---------|-------------|
+| `/sec-dub4/#/` | HTML | Home - list all models |
+| `/sec-dub4/#/model/{model}` | HTML | Model schema browser |
+| `/sec-dub4/#/model/{model}/preview/{source}` | HTML | Preview source data (50 rows) |
+| `/sec-dub4/#/model/{model}/explorer/{source}` | HTML | Interactive query builder |
+| `/sec-dub4/#/model/{model}/explorer/{source}?query={malloy}&run=true` | HTML | Execute query, show results |
+| `/sec-dub4/#/model/{model}/query/{queryName}` | HTML | Run named query, show results |
+| `/sec-dub4/#/notebook/{notebook}` | HTML | View notebook with queries/visualizations |
+| `/sec-dub4/downloads/models/{model}.malloy` | Text | Download model source file |
+| `/sec-dub4/downloads/notebooks/{notebook}.malloynb` | Text | Download notebook file |
+| `/sec-dub4/downloads/data/{file}` | File | Download data file (CSV/Parquet/JSON/Excel) |
+
+## Models
+
+### sec_filings_simple-hf
+[Browse](/sec-dub4/#/model/sec_filings_simple-hf) | [Download](/sec-dub4/downloads/models/sec_filings_simple-hf.malloy)
+
+**Sources:**
+**industry** | Table: `data/SICcodes.csv`
+- Dims: string: `SECOffice`, `Description`, `Description_nc` • number: `SIC`
+- Measures: none
+- Views: none
+
+**sub** | Table: `hf://datasets/24601p/sec-data@main/sub-08_2024.parquet`
+- Dims: timestamp: `accepted` • string: `adsh`, `afs`, `countryinc`, `form`, `SIC_f3`, `name_no_comma`, `cik_str`, `city_and_state_country`, `city_and_state`, `sic_str`, `filer_type`, `state`, `country`, `city`, `zip_code`, `fiscal_period`, `fiscal_year`, `fiscal_year_end`, `state_of_inc`, `company_name` • number: `cik`, `sic` • date: `filed`, `period`
+- Measures: number: `num_companies`, `num_submissions`, `num_industries`, `num_10Ks`, `num_10Ks_amended`, `pct_amended`, `num_days_period_to_filed`, `num_days_filed_to_acc`, `num_minutes_filed_to_acc`
+- Views: `by_year_10K_sub`, `by_industry`, `by_name`, `by_state`, `by_city`, `by_zip_code`, `by_country`, `by_form_type`, `by_fiscal_period`, `by_fiscal_period_spark`, `by_filer_type`, `by_filed_date`
+
+---
+
+### sec_filings_simple
+[Browse](/sec-dub4/#/model/sec_filings_simple) | [Download](/sec-dub4/downloads/models/sec_filings_simple.malloy)
+
+**Sources:**
+**industry** | Table: `data/SICcodes.csv`
+- Dims: string: `Industry_Name`, `Industry_Name_nc` • number: `SIC`
+- Measures: none
+- Views: none
+
+**sub** | Table: `data/sub-01-2026.parquet`
+- Dims: timestamp: `accepted` • string: `adsh`, `afs`, `form`, `name_no_comma`, `filer_type`, `state`, `country`, `city`, `zip_code`, `fiscal_period`, `fiscal_year`, `fiscal_year_end`, `state_of_incorporation`, `company_name`, `country_of_incorporation` • number: `cik`, `sic` • date: `filed`, `period`
+- Measures: number: `num_companies`, `num_submissions`, `num_industries`, `num_10Ks`, `num_10Ks_amended`, `pct_amended`, `num_days_period_to_filed`
+- Views: `by_year_10K_sub`, `by_industry`, `by_name`, `by_fiscal_year_end`, `by_state`, `by_city`, `by_zip_code`, `by_country`, `by_form_type`, `by_fiscal_period`, `by_fiscal_period_bar_spark`, `by_filer_type`, `by_filed_date`
+
+## Malloy Query Syntax
+
+**Basic Structure:**
+```malloy
+run: source_name -> {
+  group_by: field1, field2
+  aggregate: measure1, measure2
+  where: condition
+  order_by: field desc
+  limit: 100
+}
+```
+
+**Common Operations:**
+- Select all: `source -> { select: * }`
+- Group: `source -> { group_by: field }`
+- Aggregate: `source -> { aggregate: measure }`
+- Filter: `source -> { where: field > value }`
+- Sort: `source -> { order_by: field desc }`
+- Limit: `source -> { limit: 10 }`
+- Run view: `source -> view_name`
+- Nest: `{ nest: name is { group_by: field; aggregate: measure } }`
+
+**Time Granularity:** `.year`, `.quarter`, `.month`, `.week`, `.day` (e.g., `order_date.month`)
+
+**Example Query:**
+```malloy
+run: orders -> {
+  group_by: category
+  aggregate: order_count, total_revenue
+  where: status = 'Delivered'
+  order_by: total_revenue desc
+  limit: 10
+}
+```
